@@ -1,0 +1,265 @@
+---
+title: "Mana Simulation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    source_code: embed
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+library(shiny); library(stringr); library(data.table);
+
+lands_to_deck <- function(x, size=60) {
+  x <- x %>%  str_replace_all("\n", " ") %>% # replace newlines with spaces
+    str_replace_all("\\s+", " ") %>% # shorten any long whitespaces
+    trimws() %>% 
+    str_split(" ") # divide the string into elements
+  x <- x[[1]] # convert from list to vector
+  # x == c("10", "R", "10", "G", "4", "RG")
+  
+  mana <- c()
+  for (i in seq(1, length(x), by=2)) {
+    mana <- c(mana, rep(x[i+1], x[i])) # convert the counts to repetitions
+  }
+  
+  deck <- c(mana, rep("x", size - length(mana))) # fill in deck with spelkls until 60 cards
+  deck
+}
+
+rlanddrop <- function(deck, m=1000, colors=F, mul=T, draw_cards=0) {
+  size <- length(deck)
+  mana_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+  
+  ### For each color, check if it's in the deck. 
+  ### If not, then has_color will be F and then the function will ignore making a df for that color.
+  if (colors==T){
+    has_white <- F; has_blue <- F; has_black <- F; has_red <- F; has_green <- F;
+    
+    if (sum(str_detect(deck, "W")) > 0){
+      white_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+      has_white <- T
+    }
+    if (sum(str_detect(deck, "U")) > 0){
+      blue_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+      has_blue <- T
+    }
+    if (sum(str_detect(deck, "B")) > 0){
+      black_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+      has_black <- T
+    }
+    if (sum(str_detect(deck, "R")) > 0){
+      red_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+      has_red <- T
+    }
+    if (sum(str_detect(deck, "G")) > 0){
+      green_df <- data.frame(t1=numeric(), t2=numeric(), t3=numeric(), t4=numeric(), t5=numeric())
+      has_green <- T
+    }
+  }
+  
+  ### The simulation begins.
+  for (r in 1:m){ 
+    # Get list of hands by turn
+    deck <- deck[sample(1:size)]
+    hands <- list(deck[1:7])
+    
+    ### Mulligan function
+    if (mul==T){
+      num_lands <- sum(!str_detect(hands[[1]], "x"))
+      
+      if (num_lands < 2 | num_lands > 5) {
+        deck <- deck[sample(1:size)]
+        hands <- list(deck[1:6])
+        num_lands <- sum(!str_detect(hands[[1]], "x"))
+        
+        if (num_lands < 2 | num_lands > 4){
+          deck <- deck[sample(1:size)]
+          hands <- list(deck[1:5])
+          num_lands <- sum(!str_detect(hands[[1]], "x"))
+          
+          if (num_lands == 0 | num_lands == 5){
+            deck <- deck[sample(1:size)]
+            hands <- list(deck[1:4])
+          }
+        }
+        
+        # Because mulligan once or more, scry a land to top and spell to bottom.
+        scry_card <- deck[length(hands[[1]])+1]
+        if (scry_card == "x") {
+          deck[size+1] <- scry_card
+          deck <- deck[-(length(hands[[1]])+1)]
+        }
+      }
+    }
+    ### End Mulligan
+    
+    ### Drawing one or more cards on first turn
+    if (draw_cards > 0){
+      hands <- list(deck[1:(length(hands[[1]]) + draw_cards)])
+    }
+    ### End draw additional cards
+    
+    ### Get hand for first 5 turns, drawing 1 card per turn.
+    starting_hand_size <- length(hands[[1]])
+    
+    for (i in 1:4){
+      hands <- c(hands, list(deck[1:(starting_hand_size+i)]))
+    }
+    ### Use hands to get probabilities for colorless land drops
+    # Calculate whether a land drop was missed by that turn for each turn.
+    # mana_df will be aggregated and returned as output.
+    mana_row <- c()
+    
+    for (i in 1:5){
+      mana_row <- cbind(mana_row, sum(!str_detect(hands[[i]], "x")) >= i)
+    }
+    
+    mana_df[r,] <- mana_row
+    
+    ### Use hands to get probabilities for colorful land drops
+    if (colors==T){
+      if (has_white==T){
+        color_row <- c()
+        for (i in 1:5){
+          color_row <- cbind(color_row, sum(str_detect(hands[[i]], "W")) >= i)
+        }
+        white_df[r,] <- color_row
+      }
+      if (has_blue==T){
+        color_row <- c()
+        for (i in 1:5){
+          color_row <- cbind(color_row, sum(str_detect(hands[[i]], "U")) >= i)
+        }
+        blue_df[r,] <- color_row
+      }
+      if (has_black==T){
+        color_row <- c()
+        for (i in 1:5){
+          color_row <- cbind(color_row, sum(str_detect(hands[[i]], "B")) >= i)
+        }
+        black_df[r,] <- color_row
+      }
+      if (has_red==T){
+        color_row <- c()
+        for (i in 1:5){
+          color_row <- cbind(color_row, sum(str_detect(hands[[i]], "R")) >= i)
+        }
+        red_df[r,] <- color_row
+      }
+      if (has_green==T){
+        color_row <- c()
+        for (i in 1:5){
+          color_row <- cbind(color_row, sum(str_detect(hands[[i]], "G")) >= i)
+        }
+        green_df[r,] <- color_row
+      }
+    }
+  }
+  
+  ### Aggregate finished hands for colorless mana
+  mana_df <- data.table(mana_df)
+  mana_df <- mana_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+  returned_list <- list(any_color = mana_df)
+  
+  ### Aggregate finished hands for colorful mana
+  if (colors==T){
+    if (has_white==T) {
+      white_df <- data.table(white_df)
+      white_df <- white_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+      returned_list <- c(returned_list, list(white = white_df))
+    }
+    if (has_blue==T) {
+      blue_df <- data.table(blue_df)
+      blue_df <- blue_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+      returned_list <- c(returned_list, list(blue = blue_df))
+    }
+    if (has_black==T) {
+      black_df <- data.table(black_df)
+      black_df <- black_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+      returned_list <- c(returned_list, list(black = black_df))
+    }
+    if (has_red==T) {
+      red_df <- data.table(red_df)
+      red_df <- red_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+      returned_list <- c(returned_list, list(red = red_df))
+    }
+    if (has_green==T) {
+      green_df <- data.table(green_df)
+      green_df <- green_df[, j = list(t1=mean(t1), t2=mean(t2), t3=mean(t3), t4=mean(t4), t5=mean(t5))]
+      returned_list <- c(returned_list, list(green = green_df))
+    }
+  }
+  returned_list
+}
+
+prob_table <- function(landsindeck, size, extracards, numtrials){
+  deck <- lands_to_deck(landsindeck, size)
+  x <- rlanddrop(deck, colors=T, draw_cards=extracards, m=numtrials)
+
+  y <- data.frame()
+  for (i in 1:length(x)){
+    y <- rbind(y,x[[i]])
+  }
+  
+  y <- cbind(color=names(x),y)
+  colnames(y) <- c("Color", "turn 1",
+                   "turn 2", "turn 3",
+                   "turn 4", "turn 5")
+  
+  y
+}
+```
+
+Sidebar {.sidebar}
+===
+
+```{r}
+textAreaInput("lands_in_deck", "Number and type of lands in your deck", value="10 R\n10 G\n4 RG", height='200px')
+
+numericInput("num_cards", "Number of cards in deck", value=60, min=0)
+
+numericInput("extra_cards", "Extra cards drawn on turn 1", value=0, min=0)
+
+selectInput("num_trials", "Simulation Accuracy (nbr of trials)", choices=c("Medium (1000)"=1000, "High (2000)"=2000, "Almost Exact (5000)"=5000), selected=2000)
+
+actionButton("run_simulation", "Run Simulation")
+```
+
+
+
+<div style='padding: 3px; width: 220px; word-wrap: break-word;'>
+
+</div>
+
+Page 1
+=====
+
+Column {data-width=600}
+-----------------------------------------
+### Instructions
+This app calculates (through simulation) the probabilities of not missing any land drops by turns 1 through 5. 
+
+To use the app, input the counts and types of lands in your deck in the box on the left. Number, space, color, newline. W U B R G C stand for white, blue, black, red, green and colorless. Lands that produce multiple colors are also allowed. Then press "Run Simulation."
+
+
+Optional: Drawing instead of playing first can be simulated by setting "Extra Cards" to 1. The simulation accuracy can also be improved at the cost of runtime.
+
+Link to paper about this simulation:
+<a href=https://darrensstuffdrawer.blogspot.com/2018/06/mtg-optimal-land-counts-for-consistent.html target="_blank">https://darrensstuffdrawer.blogspot.com/2018/06/mtg-optimal-land-counts-for-consistent.html</a>
+
+
+Link to Channel Fireball article that this project is based on:
+<a href=https://channelfireball.com/articles/how-many-lands-do-you-need-to-consistently-hit-your-land-drops/ target="_blank">https://channelfireball.com/articles/how-many-lands-do-you-need-to-consistently-hit-your-land-drops/</a>
+
+### Probability of not missing a land drop by turns 1 through 5:
+```{r}
+renderTable({
+  input$run_simulation
+  isolate({
+      prob_table(input$lands_in_deck, input$num_cards, input$extra_cards, input$num_trials)
+  })
+})
+```
+
+
